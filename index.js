@@ -6,6 +6,8 @@ dotenv.config();
 const app = express();
 const port = process.env.PORT || 3000;
 
+const stripe = require('stripe')(process.env.PAYMENT_GATEWAY_KEY);
+
 app.use(cors());
 app.use(express.json());
 
@@ -28,6 +30,7 @@ async function run() {
         await client.connect();
         const db = client.db('profast_user');
         const parcels = db.collection('parcels');
+        const paymentsCollection = db.collection('payments');
 
         app.get('/parcels', async (req, res) => {
             const result = await parcels.find().toArray();
@@ -67,6 +70,65 @@ async function run() {
             }
         });
 
+        app.get('/parcels/:id', async (req, res) => {
+            const id = req.params.id;
+
+            try {
+                const parcel = await parcels.findOne({ _id: new ObjectId(id) });
+
+                if (!parcel) {
+                    return res.status(404).json({ error: 'Parcel not found' });
+                }
+
+                res.json(parcel);
+            } catch (error) {
+                console.error('Error fetching parcel:', error);
+                res.status(500).json({ error: 'Server error' });
+            }
+        });
+
+        app.post('/create-payment-intent', async (req, res) => {
+            const amount = req.body.amount; //amount received from the client
+            try {
+                const paymentIntent = await stripe.paymentIntents.create({
+                    amount: amount,
+                    currency: 'usd',
+                    automatic_payment_methods: { enabled: true },
+                });
+
+                res.json({ clientSecret: paymentIntent.client_secret });
+            } catch (error) {
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        app.post('/payments', async (req, res) => {
+            const payment = req.body; // includes parcelId, user info, amount, timestamp, etc.
+
+            try {
+                const result = await paymentsCollection.insertOne({
+                    ...payment,
+                    paidAt: new Date(),
+                });
+
+                // Also update parcel status
+                await parcels.updateOne(
+                    { _id: new ObjectId(payment.parcelId) },
+                    {
+                        $set: {
+                            payment_status: 'paid',
+                            delivery_status: 'pending',
+                            paidAt: new Date()
+                        }
+                    }
+                );
+
+                res.json({ success: true, paymentId: result.insertedId });
+            } catch (error) {
+                console.error('Payment logging failed:', error);
+                res.status(500).json({ error: 'Server error' });
+            }
+        });
 
 
         // Send a ping to confirm a successful connection
