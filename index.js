@@ -29,8 +29,28 @@ async function run() {
         // Connect the client to the server	(optional starting in v4.7)
         await client.connect();
         const db = client.db('profast_user');
+        const usersCollection = db.collection('users');
         const parcels = db.collection('parcels');
         const paymentsCollection = db.collection('payments');
+
+        // routes/users.js or in your existing user controller
+        app.post('/users', async (req, res) => {
+            const user = req.body;
+
+            const existingUser = await usersCollection.findOne({ email: user.email });
+
+            if (existingUser) {
+                return res.status(200).json({ message: 'User already exists', user: existingUser });
+            }
+
+            // Add default role and timestamp
+            user.role = 'user';
+            user.createdAt = new Date();
+            user.lastLogin = new Date();
+
+            const result = await usersCollection.insertOne(user);
+            res.status(201).json({ message: 'User created', insertedId: result.insertedId });
+        });
 
         app.get('/parcels', async (req, res) => {
             const result = await parcels.find().toArray();
@@ -129,6 +149,20 @@ async function run() {
                 res.status(500).json({ error: 'Server error' });
             }
         });
+
+        // GET /payments?email=user@example.com
+        app.get('/payments', async (req, res) => {
+            const email = req.query.email;
+
+            const query = email ? { userEmail: email } : {};
+            const payments = await paymentsCollection
+                .find(query)
+                .sort({ paidAt: -1 })
+                .toArray();
+
+            res.json(payments);
+        });
+
 
 
         // Send a ping to confirm a successful connection
